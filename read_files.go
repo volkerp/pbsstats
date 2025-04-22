@@ -10,9 +10,60 @@ import (
 
 type DigestCounter map[Digest]int
 
-func scanAndCountDigests(root string) (DigestCounter, error) {
-	counter := make(DigestCounter)
-	counterMutex := &sync.Mutex{}      // To safely update the counter map
+type RefChunks []uint32
+
+// map from filename to a list of chunks
+type FileRefChunks map[string]RefChunks
+
+type DigestIndexMap struct {
+	index   []Digest       // Slice to maintain order and index access
+	counter map[Digest]int // Map for fast lookup
+	fileref FileRefChunks
+}
+
+// NewDigestIndexMap creates and initializes a new DigestIndexMap
+func NewDigestIndexMap() *DigestIndexMap {
+	return &DigestIndexMap{
+		index:   make([]Digest, 0),
+		counter: make(map[Digest]int),
+		fileref: make(FileRefChunks),
+	}
+}
+
+// get the index of a digest
+func (d *DigestIndexMap) indexOfDigest(digest Digest) int {
+	for i, v := range d.index {
+		if v == digest {
+			return i
+		}
+	}
+	return -1
+}
+
+// add digest to the index
+func (d *DigestIndexMap) add(digest Digest) {
+	if _, exists := d.counter[digest]; !exists {
+		d.index = append(d.index, digest)
+	}
+	d.counter[digest]++
+}
+
+// add or update the file reference
+func (d *DigestIndexMap) addFileRef(filename string, digest Digest) {
+	digestIndex := d.indexOfDigest(digest)
+	if digestIndex == -1 {
+		fmt.Printf("Digest %x not found in index\n", digest)
+		return
+	}
+	if _, exists := d.fileref[filename]; !exists {
+		d.fileref[filename] = make(RefChunks, 0)
+	}
+	d.fileref[filename] = append(d.fileref[filename], uint32(digestIndex))
+}
+
+func scanAndCountDigests(root string) (*DigestIndexMap, error) {
+	digestsIndex := NewDigestIndexMap()
+	digestsIndexMutex := &sync.Mutex{} // To safely update the counter map
 	fileChan := make(chan string, 100) // Channel to pass file paths
 	wg := &sync.WaitGroup{}            // WaitGroup to wait for all workers
 
@@ -26,11 +77,12 @@ func scanAndCountDigests(root string) (DigestCounter, error) {
 				continue
 			}
 			// Safely update the counter
-			counterMutex.Lock()
+			digestsIndexMutex.Lock()
 			for _, digest := range fidx.Digests {
-				counter[digest]++
+				digestsIndex.add(digest)
+				digestsIndex.addFileRef(path, digest)
 			}
-			counterMutex.Unlock()
+			digestsIndexMutex.Unlock()
 		}
 	}
 
@@ -55,10 +107,10 @@ func scanAndCountDigests(root string) (DigestCounter, error) {
 	close(fileChan) // Close the channel to signal workers to stop
 	wg.Wait()       // Wait for all workers to finish
 
-	return counter, err
+	return digestsIndex, err
 }
 
-func printOccurrences(counter DigestCounter, topN int) {
+func printOccurrences(digestIndex *DigestIndexMap, topN int) {
 	fmt.Printf("Top %d Digest occurrences:\n", topN)
 	type digestCount struct {
 		digest Digest
@@ -66,7 +118,7 @@ func printOccurrences(counter DigestCounter, topN int) {
 	}
 
 	var digestList []digestCount
-	for digest, count := range counter {
+	for digest, count := range digestIndex.counter {
 		digestList = append(digestList, digestCount{digest, count})
 	}
 
@@ -80,7 +132,19 @@ func printOccurrences(counter DigestCounter, topN int) {
 		if i >= topN {
 			break
 		}
-		fmt.Printf("%x: %d\n", entry.digest, entry.count)
+		digestIndex := digestIndex.indexOfDigest(entry.digest)
+		fmt.Printf("%x (%d): %d\n", entry.digest, digestIndex, entry.count)
+	}
+}
+
+func printDigestRefs(digestsIndex *DigestIndexMap) {
+	fmt.Println("File references for each digest:")
+	for filename, refs := range digestsIndex.fileref {
+		fmt.Printf("%s: ", filename)
+		for _, ref := range refs {
+			fmt.Printf("%d ", ref)
+		}
+		fmt.Println()
 	}
 }
 
@@ -90,11 +154,12 @@ func main() {
 		os.Exit(1)
 	}
 	root := os.Args[1]
-	counter, err := scanAndCountDigests(root)
+	digestIndex, err := scanAndCountDigests(root)
 	if err != nil {
 		fmt.Printf("Scan error: %v\n", err)
 		os.Exit(1)
 	}
 
-	printOccurrences(counter, 50)
+	printOccurrences(digestIndex, 50)
+	printDigestRefs(digestIndex)
 }
