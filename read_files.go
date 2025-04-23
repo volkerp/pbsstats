@@ -143,7 +143,8 @@ func scanIndexFiles(root string) (*DigestMap, Files, error) {
 }
 
 func printOccurrences(digestMap *DigestMap, topN int) {
-	fmt.Printf("Top %d Digest occurrences:\n", topN)
+	fmt.Printf("Total unique digests/chunks: %d\n", len(digestMap.digestIndex))
+	fmt.Printf("Top %d digest occurrences in indices:\n", topN)
 	type digestCount struct {
 		digest Digest
 		count  int
@@ -165,8 +166,7 @@ func printOccurrences(digestMap *DigestMap, topN int) {
 		if i >= topN {
 			break
 		}
-		digestIndex := digestMap.digestIndex[entry.digest]
-		fmt.Printf("%x (%d): %d\n", entry.digest, digestIndex, entry.count)
+		fmt.Printf("%032x: %d\n", entry.digest, entry.count)
 	}
 }
 
@@ -232,5 +232,4 @@ func main() {
 
 	printOccurrences(digestsMap, topChunks)
 	printFileDedupHighest(fileIndex, topFiles)
-	fmt.Printf("Total unique digests: %d\n", len(digestsMap.digestIndex))
 }
