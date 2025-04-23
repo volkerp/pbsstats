@@ -20,66 +20,59 @@ func NewFileInfo() *FileInfo {
 	}
 }
 
-type DigestIndexMap struct {
-	index    []Digest       // Slice to maintain order and index access
-	counter  map[Digest]int // Map for fast lookup
-	fileInfo map[string]FileInfo
+type DigestMap struct {
+	digestIndex    map[Digest]uint32
+	digestsByIndex map[uint32]Digest
+	counter        map[Digest]int
 }
 
-// NewDigestIndexMap creates and initializes a new DigestIndexMap
-func NewDigestIndexMap() *DigestIndexMap {
-	return &DigestIndexMap{
-		index:    make([]Digest, 0),
-		counter:  make(map[Digest]int),
-		fileInfo: make(map[string]FileInfo),
+func NewDigestMap() *DigestMap {
+	return &DigestMap{
+		digestIndex:    make(map[Digest]uint32),
+		digestsByIndex: make(map[uint32]Digest),
+		counter:        make(map[Digest]int),
 	}
 }
 
-// get the index of a digest
-func (d *DigestIndexMap) indexOfDigest(digest Digest) int {
-	for i, v := range d.index {
-		if v == digest {
-			return i
-		}
-	}
-	return -1
-}
-
-// add digest to the index
-func (d *DigestIndexMap) add(digest Digest) {
-	if _, exists := d.counter[digest]; !exists {
-		d.index = append(d.index, digest)
+func (d *DigestMap) add(digest Digest) uint32 {
+	if _, exists := d.digestIndex[digest]; !exists {
+		index := uint32(len(d.digestIndex))
+		d.digestIndex[digest] = index
+		d.digestsByIndex[index] = digest
+		d.counter[digest] = 1
+		return index
 	}
 	d.counter[digest]++
+	return d.digestIndex[digest]
 }
 
-// add or update the file reference
-func (d *DigestIndexMap) addFileRef(filename string, digest Digest) {
-	digestIndex := d.indexOfDigest(digest)
-	if digestIndex == -1 {
-		fmt.Printf("Digest %x not found in index\n", digest)
-		return
+type Files map[string]FileInfo
+
+func (f *Files) addFileRef(filename string, digestIndex uint32) {
+	if _, exists := (*f)[filename]; !exists {
+		(*f)[filename] = *NewFileInfo()
 	}
-	if _, exists := d.fileInfo[filename]; !exists {
-		d.fileInfo[filename] = *NewFileInfo()
-	}
-	fileInfo := d.fileInfo[filename]
-	fileInfo.refChunks = append(fileInfo.refChunks, uint32(digestIndex))
-	d.fileInfo[filename] = fileInfo
+	fileInfo := (*f)[filename]
+	fileInfo.refChunks = append(fileInfo.refChunks, digestIndex)
+	(*f)[filename] = fileInfo
 }
 
-func calculateFileDedup(digestsIndex *DigestIndexMap) int {
-	dedupCount := 0
-	for _, count := range digestsIndex.counter {
-		if count > 1 {
-			dedupCount += count - 1
+func calculateFileDedup(files Files) Files {
+	for filename, fileInfo := range files {
+		// Calculate unique chunks
+		unique := make(map[uint32]struct{})
+		for _, idx := range fileInfo.refChunks {
+			unique[idx] = struct{}{}
 		}
+		fileInfo.uniqueChunks = uint32(len(unique))
+		files[filename] = fileInfo
 	}
-	return dedupCount
+	return files
 }
 
-func scanAndCountDigests(root string) (*DigestIndexMap, error) {
-	digestsIndex := NewDigestIndexMap()
+func scanAndCountDigests(root string) (*DigestMap, Files, error) {
+	digestsMap := NewDigestMap()
+	fileIndex := make(Files)
 	digestsIndexMutex := &sync.Mutex{} // To safely update the counter map
 	fileChan := make(chan string, 100) // Channel to pass file paths
 	wg := &sync.WaitGroup{}            // WaitGroup to wait for all workers
@@ -95,9 +88,10 @@ func scanAndCountDigests(root string) (*DigestIndexMap, error) {
 			}
 			// Safely update the counter
 			digestsIndexMutex.Lock()
+			fmt.Printf("Processing file: %s\n", path)
 			for _, digest := range fidx.Digests {
-				digestsIndex.add(digest)
-				digestsIndex.addFileRef(path, digest)
+				digestIndex := digestsMap.add(digest)
+				fileIndex.addFileRef(path, digestIndex)
 			}
 			digestsIndexMutex.Unlock()
 		}
@@ -115,7 +109,6 @@ func scanAndCountDigests(root string) (*DigestIndexMap, error) {
 			return err
 		}
 		if !d.IsDir() && filepath.Ext(path) == ".fidx" {
-			fmt.Printf("Processing file: %s\n", path)
 			fileChan <- path // Send file path to the channel
 		}
 		return nil // Continue walking
@@ -124,10 +117,10 @@ func scanAndCountDigests(root string) (*DigestIndexMap, error) {
 	close(fileChan) // Close the channel to signal workers to stop
 	wg.Wait()       // Wait for all workers to finish
 
-	return digestsIndex, err
+	return digestsMap, fileIndex, err
 }
 
-func printOccurrences(digestIndex *DigestIndexMap, topN int) {
+func printOccurrences(digestIndex *DigestMap, topN int) {
 	fmt.Printf("Top %d Digest occurrences:\n", topN)
 	type digestCount struct {
 		digest Digest
@@ -149,14 +142,14 @@ func printOccurrences(digestIndex *DigestIndexMap, topN int) {
 		if i >= topN {
 			break
 		}
-		digestIndex := digestIndex.indexOfDigest(entry.digest)
+		digestIndex := digestIndex.digestIndex[entry.digest]
 		fmt.Printf("%x (%d): %d\n", entry.digest, digestIndex, entry.count)
 	}
 }
 
-func printDigestRefs(digestsIndex *DigestIndexMap) {
+func printFileDigestRefs(fileIndex Files) {
 	fmt.Println("File references for each digest:")
-	for filename, fileInfo := range digestsIndex.fileInfo {
+	for filename, fileInfo := range fileIndex {
 		fmt.Printf("%s: ", filename)
 		for _, ref := range fileInfo.refChunks {
 			fmt.Printf("%d ", ref)
@@ -165,18 +158,47 @@ func printDigestRefs(digestsIndex *DigestIndexMap) {
 	}
 }
 
+func printFileDedupHighest(fileIndex Files, topN int) {
+	fmt.Printf("Top %d highest dedup ratio files:\n", topN)
+	type fileDedup struct {
+		filename string
+		dedup    float32
+	}
+	var fileDedupList []fileDedup
+
+	for filename, fileInfo := range fileIndex {
+		dedup := float32(len(fileInfo.refChunks)) / float32(fileInfo.uniqueChunks)
+		fileDedupList = append(fileDedupList, fileDedup{filename, dedup})
+	}
+	// Sort by ratio in descending order
+	sort.Slice(fileDedupList, func(i, j int) bool {
+		return fileDedupList[i].dedup > fileDedupList[j].dedup
+	})
+
+	// Print the top N entries
+	for i, entry := range fileDedupList {
+		if i >= topN {
+			break
+		}
+		fmt.Printf("%s: %.2f\n", entry.filename, entry.dedup)
+	}
+
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: scan_fidx <directory>")
 		os.Exit(1)
 	}
 	root := os.Args[1]
-	digestIndex, err := scanAndCountDigests(root)
+	digestsMap, fileIndex, err := scanAndCountDigests(root)
 	if err != nil {
 		fmt.Printf("Scan error: %v\n", err)
 		os.Exit(1)
 	}
 
-	printOccurrences(digestIndex, 50)
-	printDigestRefs(digestIndex)
+	fileIndex = calculateFileDedup(fileIndex)
+
+	printOccurrences(digestsMap, 50)
+	printFileDedupHighest(fileIndex, 50)
 }
