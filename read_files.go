@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,14 +24,14 @@ func NewFileInfo() *FileInfo {
 type DigestMap struct {
 	digestIndex    map[Digest]uint32
 	digestsByIndex map[uint32]Digest
-	counter        map[Digest]int
+	counter        map[uint32]int
 }
 
 func NewDigestMap() *DigestMap {
 	return &DigestMap{
 		digestIndex:    make(map[Digest]uint32),
 		digestsByIndex: make(map[uint32]Digest),
-		counter:        make(map[Digest]int),
+		counter:        make(map[uint32]int),
 	}
 }
 
@@ -39,11 +40,13 @@ func (d *DigestMap) add(digest Digest) uint32 {
 		index := uint32(len(d.digestIndex))
 		d.digestIndex[digest] = index
 		d.digestsByIndex[index] = digest
-		d.counter[digest] = 1
+		d.counter[index] = 1
+		return index
+	} else {
+		index := d.digestIndex[digest]
+		d.counter[index]++
 		return index
 	}
-	d.counter[digest]++
-	return d.digestIndex[digest]
 }
 
 type Files map[string]FileInfo
@@ -70,7 +73,7 @@ func calculateFileDedup(files Files) Files {
 	return files
 }
 
-func scanAndCountDigests(root string) (*DigestMap, Files, error) {
+func scanIndexFiles(root string) (*DigestMap, Files, error) {
 	digestsMap := NewDigestMap()
 	fileIndex := make(Files)
 	digestsIndexMutex := &sync.Mutex{} // To safely update the counter map
@@ -81,19 +84,35 @@ func scanAndCountDigests(root string) (*DigestMap, Files, error) {
 	worker := func() {
 		defer wg.Done()
 		for path := range fileChan {
-			fidx, err := readFidxFile(path)
-			if err != nil {
-				fmt.Printf("Error processing %s: %v\n", path, err)
-				continue
+			if filepath.Ext(path) == ".didx" {
+				didx, err := readDidxFile(path)
+				if err != nil {
+					fmt.Printf("Error processing %s: %v\n", path, err)
+					continue
+				}
+
+				digestsIndexMutex.Lock()
+				fmt.Printf("Processing file: %s\n", path)
+				for _, digest := range didx.Digests {
+					digestIndex := digestsMap.add(digest.Digest)
+					fileIndex.addFileRef(path, digestIndex)
+				}
+				digestsIndexMutex.Unlock()
+			} else if filepath.Ext(path) == ".fidx" {
+				fidx, err := readFidxFile(path)
+				if err != nil {
+					fmt.Printf("Error processing %s: %v\n", path, err)
+					continue
+				}
+
+				digestsIndexMutex.Lock()
+				fmt.Printf("Processing file: %s\n", path)
+				for _, digest := range fidx.Digests {
+					digestIndex := digestsMap.add(digest)
+					fileIndex.addFileRef(path, digestIndex)
+				}
+				digestsIndexMutex.Unlock()
 			}
-			// Safely update the counter
-			digestsIndexMutex.Lock()
-			fmt.Printf("Processing file: %s\n", path)
-			for _, digest := range fidx.Digests {
-				digestIndex := digestsMap.add(digest)
-				fileIndex.addFileRef(path, digestIndex)
-			}
-			digestsIndexMutex.Unlock()
 		}
 	}
 
@@ -108,7 +127,10 @@ func scanAndCountDigests(root string) (*DigestMap, Files, error) {
 		if err != nil {
 			return err
 		}
-		if !d.IsDir() && filepath.Ext(path) == ".fidx" {
+		if d.IsDir() && filepath.Base(path) == ".chunks" {
+			return filepath.SkipDir // Skip the ".chunks" directory
+		}
+		if !d.IsDir() && (filepath.Ext(path) == ".fidx" || filepath.Ext(path) == ".didx") {
 			fileChan <- path // Send file path to the channel
 		}
 		return nil // Continue walking
@@ -120,7 +142,7 @@ func scanAndCountDigests(root string) (*DigestMap, Files, error) {
 	return digestsMap, fileIndex, err
 }
 
-func printOccurrences(digestIndex *DigestMap, topN int) {
+func printOccurrences(digestMap *DigestMap, topN int) {
 	fmt.Printf("Top %d Digest occurrences:\n", topN)
 	type digestCount struct {
 		digest Digest
@@ -128,7 +150,8 @@ func printOccurrences(digestIndex *DigestMap, topN int) {
 	}
 
 	var digestList []digestCount
-	for digest, count := range digestIndex.counter {
+	for digestIdx, count := range digestMap.counter {
+		digest := digestMap.digestsByIndex[digestIdx]
 		digestList = append(digestList, digestCount{digest, count})
 	}
 
@@ -142,7 +165,7 @@ func printOccurrences(digestIndex *DigestMap, topN int) {
 		if i >= topN {
 			break
 		}
-		digestIndex := digestIndex.digestIndex[entry.digest]
+		digestIndex := digestMap.digestIndex[entry.digest]
 		fmt.Printf("%x (%d): %d\n", entry.digest, digestIndex, entry.count)
 	}
 }
@@ -186,12 +209,20 @@ func printFileDedupHighest(fileIndex Files, topN int) {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: scan_fidx <directory>")
+	var topChunks int
+	var topFiles int
+
+	flag.IntVar(&topChunks, "top-chunks", 50, "Show top N most referenced chunks")
+	flag.IntVar(&topFiles, "top-files", 50, "Show top N files with highest dedup ratio")
+	flag.Parse()
+
+	if flag.NArg() < 1 {
+		fmt.Println("Usage: scan_fidx [--top-chunks N] [--top-files N] <directory>")
 		os.Exit(1)
 	}
-	root := os.Args[1]
-	digestsMap, fileIndex, err := scanAndCountDigests(root)
+	root := flag.Arg(0)
+
+	digestsMap, fileIndex, err := scanIndexFiles(root)
 	if err != nil {
 		fmt.Printf("Scan error: %v\n", err)
 		os.Exit(1)
@@ -199,6 +230,7 @@ func main() {
 
 	fileIndex = calculateFileDedup(fileIndex)
 
-	printOccurrences(digestsMap, 50)
-	printFileDedupHighest(fileIndex, 50)
+	printOccurrences(digestsMap, topChunks)
+	printFileDedupHighest(fileIndex, topFiles)
+	fmt.Printf("Total unique digests: %d\n", len(digestsMap.digestIndex))
 }

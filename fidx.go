@@ -9,20 +9,22 @@ import (
 
 const (
 	FidxHeaderSize   = 4096
-	FidxMagicSize    = 8
-	FidxUUIDSize     = 16
-	FidxCsumSize     = 32
+	MagicSize        = 8
+	UUIDSize         = 16
+	CsumSize         = 32
 	FidxReservedSize = 4016
+	DidxReservedSize = 4032
 	FidxDigestSize   = 32
 )
 
-var FidxMagic = [FidxMagicSize]byte{47, 127, 65, 237, 145, 253, 15, 205}
+var FidxMagic = [MagicSize]byte{47, 127, 65, 237, 145, 253, 15, 205}
+var DidxMagic = [MagicSize]byte{28, 145, 78, 165, 25, 186, 179, 205}
 
 type FidxHeader struct {
-	Magic     [FidxMagicSize]byte
-	UUID      [FidxUUIDSize]byte
+	Magic     [MagicSize]byte
+	UUID      [UUIDSize]byte
 	Ctime     int64
-	IndexCsum [FidxCsumSize]byte
+	IndexCsum [CsumSize]byte
 	Size      uint64
 	ChunkSize uint64
 	Reserved  [FidxReservedSize]byte
@@ -33,6 +35,24 @@ type Digest [FidxDigestSize]byte
 type Fidx struct {
 	Header  FidxHeader
 	Digests []Digest
+}
+
+type DidxHeader struct {
+	Magic     [MagicSize]byte
+	UUID      [UUIDSize]byte
+	Ctime     int64
+	IndexCsum [CsumSize]byte
+	Reserved  [DidxReservedSize]byte
+}
+
+type DidxEntry struct {
+	Offset uint64
+	Digest Digest
+}
+
+type Didx struct {
+	Header  DidxHeader
+	Digests []DidxEntry
 }
 
 func readFidxHeader(r io.Reader) (*FidxHeader, error) {
@@ -47,10 +67,22 @@ func readFidxHeader(r io.Reader) (*FidxHeader, error) {
 	return &hdr, nil
 }
 
+func readDidxHeader(r io.Reader) (*DidxHeader, error) {
+	var hdr DidxHeader
+	err := binary.Read(r, binary.LittleEndian, &hdr)
+	if err != nil {
+		return nil, err
+	}
+	if hdr.Magic != DidxMagic {
+		return nil, fmt.Errorf("invalid magic: %v", hdr.Magic)
+	}
+	return &hdr, nil
+}
+
 func readFidxDigests(r io.Reader) ([]Digest, error) {
 	var digests []Digest
-	digest := make([]byte, FidxDigestSize)
 	for {
+		digest := make([]byte, FidxDigestSize)
 		n, err := io.ReadFull(r, digest)
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
 			break
@@ -64,6 +96,22 @@ func readFidxDigests(r io.Reader) ([]Digest, error) {
 		digests = append(digests, Digest(digest))
 	}
 	return digests, nil
+}
+
+func readDidxEntries(r io.Reader) ([]DidxEntry, error) {
+	entries := make([]DidxEntry, 0)
+	for {
+		var entry DidxEntry
+		err := binary.Read(r, binary.LittleEndian, &entry)
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
 }
 
 func readFidxFile(filename string) (*Fidx, error) {
@@ -84,6 +132,25 @@ func readFidxFile(filename string) (*Fidx, error) {
 	}
 
 	return &Fidx{*hdr, digests}, nil
+}
+
+func readDidxFile(filename string) (*Didx, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	hdr, err := readDidxHeader(f)
+	if err != nil {
+		return nil, err
+	}
+
+	entries, err := readDidxEntries(f)
+	if err != nil {
+		return nil, err
+	}
+	return &Didx{*hdr, entries}, nil
 }
 
 // func main() {
