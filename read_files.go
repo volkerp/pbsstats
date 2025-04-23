@@ -35,6 +35,14 @@ func NewDigestMap() *DigestMap {
 	}
 }
 
+type Files map[string]FileInfo
+
+var (
+	globalDataMutex  sync.RWMutex
+	globalDigestsMap DigestMap
+	globalFileIndex  Files
+)
+
 func (d *DigestMap) add(digest Digest) uint32 {
 	if _, exists := d.digestIndex[digest]; !exists {
 		index := uint32(len(d.digestIndex))
@@ -48,8 +56,6 @@ func (d *DigestMap) add(digest Digest) uint32 {
 		return index
 	}
 }
-
-type Files map[string]FileInfo
 
 func (f *Files) addFileRef(filename string, digestIndex uint32) {
 	if _, exists := (*f)[filename]; !exists {
@@ -73,10 +79,7 @@ func calculateFileDedup(files Files) Files {
 	return files
 }
 
-func scanIndexFiles(root string) (*DigestMap, Files, error) {
-	digestsMap := NewDigestMap()
-	fileIndex := make(Files)
-	digestsIndexMutex := &sync.Mutex{} // To safely update the counter map
+func scanIndexFiles(root string) error {
 	fileChan := make(chan string, 100) // Channel to pass file paths
 	wg := &sync.WaitGroup{}            // WaitGroup to wait for all workers
 
@@ -91,13 +94,14 @@ func scanIndexFiles(root string) (*DigestMap, Files, error) {
 					continue
 				}
 
-				digestsIndexMutex.Lock()
+				globalDataMutex.Lock()
 				fmt.Printf("Processing file: %s\n", path)
 				for _, digest := range didx.Digests {
-					digestIndex := digestsMap.add(digest.Digest)
-					fileIndex.addFileRef(path, digestIndex)
+					digestIndex := globalDigestsMap.add(digest.Digest)
+					globalFileIndex.addFileRef(path, digestIndex)
+
 				}
-				digestsIndexMutex.Unlock()
+				globalDataMutex.Unlock()
 			} else if filepath.Ext(path) == ".fidx" {
 				fidx, err := readFidxFile(path)
 				if err != nil {
@@ -105,13 +109,13 @@ func scanIndexFiles(root string) (*DigestMap, Files, error) {
 					continue
 				}
 
-				digestsIndexMutex.Lock()
+				globalDataMutex.Lock()
 				fmt.Printf("Processing file: %s\n", path)
 				for _, digest := range fidx.Digests {
-					digestIndex := digestsMap.add(digest)
-					fileIndex.addFileRef(path, digestIndex)
+					digestIndex := globalDigestsMap.add(digest)
+					globalFileIndex.addFileRef(path, digestIndex)
 				}
-				digestsIndexMutex.Unlock()
+				globalDataMutex.Unlock()
 			}
 		}
 	}
@@ -139,7 +143,7 @@ func scanIndexFiles(root string) (*DigestMap, Files, error) {
 	close(fileChan) // Close the channel to signal workers to stop
 	wg.Wait()       // Wait for all workers to finish
 
-	return digestsMap, fileIndex, err
+	return err
 }
 
 func printOccurrences(digestMap *DigestMap, topN int) {
@@ -211,25 +215,40 @@ func printFileDedupHighest(fileIndex Files, topN int) {
 func main() {
 	var topChunks int
 	var topFiles int
+	var webPort int
 
 	flag.IntVar(&topChunks, "top-chunks", 50, "Show top N most referenced chunks")
 	flag.IntVar(&topFiles, "top-files", 50, "Show top N files with highest dedup ratio")
+	flag.IntVar(&webPort, "web-port", 0, "Start webserver on given port (0 disables webserver)")
 	flag.Parse()
 
 	if flag.NArg() < 1 {
-		fmt.Println("Usage: scan_fidx [--top-chunks N] [--top-files N] <directory>")
+		fmt.Println("Usage: scan_fidx [--top-chunks N] [--top-files N] [--web-port PORT] <directory>")
 		os.Exit(1)
 	}
 	root := flag.Arg(0)
 
-	digestsMap, fileIndex, err := scanIndexFiles(root)
+	// Initialize global maps
+	globalDigestsMap = *NewDigestMap()
+	globalFileIndex = make(Files)
+
+	if webPort != 0 {
+		startWebServer(webPort)
+	}
+
+	err := scanIndexFiles(root)
 	if err != nil {
 		fmt.Printf("Scan error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fileIndex = calculateFileDedup(fileIndex)
+	globalFileIndex = calculateFileDedup(globalFileIndex)
 
-	printOccurrences(digestsMap, topChunks)
-	printFileDedupHighest(fileIndex, topFiles)
+	printOccurrences(&globalDigestsMap, topChunks)
+	printFileDedupHighest(globalFileIndex, topFiles)
+
+	if webPort != 0 {
+		// Block forever to keep the webserver running
+		select {}
+	}
 }
