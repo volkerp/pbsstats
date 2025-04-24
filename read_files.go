@@ -134,7 +134,7 @@ func scanIndexFiles(root string) error {
 		if d.IsDir() && filepath.Base(path) == ".chunks" {
 			return filepath.SkipDir // Skip the ".chunks" directory
 		}
-		if !d.IsDir() && (filepath.Ext(path) == ".fidx" || filepath.Ext(path) == ".didx") {
+		if !d.IsDir() && (filepath.Ext(path) == ".fidx" || filepath.Ext(path) == ".didxxxxxx") {
 			fileChan <- path // Send file path to the channel
 		}
 		return nil // Continue walking
