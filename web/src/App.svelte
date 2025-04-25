@@ -3,29 +3,43 @@
   import viteLogo from '/vite.svg'
   import Counter from './lib/Counter.svelte'
   import ChunkMap from './lib/ChunkMap.svelte'
+  import FileList from './lib/FileList.svelte'
 </script>
 
-<main>
-  <h1>Vite + Svelte</h1>
-
-  <div class="card">
-    <Counter />
+<main class="main-layout">
+  <div class="sidebar">
+    <FileList />
   </div>
-
-  <div class="card">
-    <ChunkMap />
+  <div class="content">
+    <h1>Vite + Svelte</h1>
+    <div class="card">
+      <Counter />
+    </div>
+    <div class="card">
+      <ChunkMap />
+    </div>
   </div>
-
-  <p>
-    Check out <a href="https://github.com/sveltejs/kit#readme" target="_blank" rel="noreferrer">SvelteKit</a>, the official Svelte app framework powered by Vite!
-  </p>
-
-  <p class="read-the-docs">
-    Click on the Vite and Svelte logos to learn more
-  </p>
 </main>
 
 <style>
+  .main-layout {
+    display: flex;
+    height: 100vh;
+    margin: 0;
+    padding: 0;
+  }
+  .sidebar {
+    height: 100vh;
+    overflow-y: auto;
+    background: #fafbfc;
+    border-right: 1px solid #ccc;
+    flex-shrink: 0;
+  }
+  .content {
+    flex: 1 1 0%;
+    padding: 1.5em;
+    overflow: auto;
+  }
   .logo {
     height: 6em;
     padding: 1.5em;

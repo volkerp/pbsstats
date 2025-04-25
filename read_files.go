@@ -21,6 +21,16 @@ func NewFileInfo() *FileInfo {
 	}
 }
 
+// calculateFileDedup for single file
+func calculateFileDedup(fileInfo *FileInfo) {
+	// Calculate unique chunks
+	unique := make(map[uint32]struct{})
+	for _, idx := range fileInfo.refChunks {
+		unique[idx] = struct{}{}
+	}
+	fileInfo.uniqueChunks = uint32(len(unique))
+}
+
 type DigestMap struct {
 	digestIndex    map[Digest]uint32
 	digestsByIndex map[uint32]Digest
@@ -66,7 +76,7 @@ func (f *Files) addFileRef(filename string, digestIndex uint32) {
 	(*f)[filename] = fileInfo
 }
 
-func calculateFileDedup(files Files) Files {
+func calculateFilesDedup(files Files) Files {
 	for filename, fileInfo := range files {
 		// Calculate unique chunks
 		unique := make(map[uint32]struct{})
@@ -99,8 +109,11 @@ func scanIndexFiles(root string) error {
 				for _, digest := range didx.Digests {
 					digestIndex := globalDigestsMap.add(digest.Digest)
 					globalFileIndex.addFileRef(path, digestIndex)
-
 				}
+				// Calculate unique chunks for the file
+				fileInfo := globalFileIndex[path]
+				calculateFileDedup(&fileInfo)
+				globalFileIndex[path] = fileInfo
 				globalDataMutex.Unlock()
 			} else if filepath.Ext(path) == ".fidx" {
 				fidx, err := readFidxFile(path)
@@ -115,6 +128,10 @@ func scanIndexFiles(root string) error {
 					digestIndex := globalDigestsMap.add(digest)
 					globalFileIndex.addFileRef(path, digestIndex)
 				}
+				// Calculate unique chunks for the file
+				fileInfo := globalFileIndex[path]
+				calculateFileDedup(&fileInfo)
+				globalFileIndex[path] = fileInfo
 				globalDataMutex.Unlock()
 			}
 		}
@@ -134,7 +151,7 @@ func scanIndexFiles(root string) error {
 		if d.IsDir() && filepath.Base(path) == ".chunks" {
 			return filepath.SkipDir // Skip the ".chunks" directory
 		}
-		if !d.IsDir() && (filepath.Ext(path) == ".fidx" || filepath.Ext(path) == ".didxxxxxx") {
+		if !d.IsDir() && (filepath.Ext(path) == ".fidx" || filepath.Ext(path) == ".didx") {
 			fileChan <- path // Send file path to the channel
 		}
 		return nil // Continue walking
@@ -241,8 +258,6 @@ func main() {
 		fmt.Printf("Scan error: %v\n", err)
 		os.Exit(1)
 	}
-
-	globalFileIndex = calculateFileDedup(globalFileIndex)
 
 	printOccurrences(&globalDigestsMap, topChunks)
 	printFileDedupHighest(globalFileIndex, topFiles)

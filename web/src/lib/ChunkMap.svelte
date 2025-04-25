@@ -1,5 +1,7 @@
 <script>
   import { onMount } from 'svelte';
+  import { hoveredFile } from './hoveredFile.js';
+  import { filesStore } from './filesStore.js';
   let canvas;
   let ctx;
   let digests = [];
@@ -7,12 +9,33 @@
   let maxCount = 1;
   let scale = 1;
   let numCols = 100;
-  let offsetX = 0;
+  let offsetX = 0;   // viewport offset
   let offsetY = 0;
+  let viewp_ofs = { x: 0, y: 0 }; // viewport offset
   let mipMap = [];
   let isPanning = false;
   let startPan = { x: 0, y: 0 };
   let panOrigin = { x: 0, y: 0 };
+  let currentHoveredFile = null;
+    
+  let latestFetchId = 0;
+
+  hoveredFile.subscribe(async value => {
+    currentHoveredFile = value;
+    if (currentHoveredFile?.filename) {
+      const fetchId = ++latestFetchId;
+      const res = await fetch(`http://localhost:8080/api/refchunks?filename=${encodeURIComponent(currentHoveredFile.filename)}`);
+      const json = await res.json();
+
+      // Only update if this is the latest fetch
+      if (fetchId === latestFetchId && currentHoveredFile && Array.isArray(json.ref_chunks)) {
+        currentHoveredFile.ref_chunks = new Set(json.ref_chunks);
+        draw();
+      }
+    } else {
+      draw();
+    }
+  });
 
   // Fetch digest data from API
   async function fetchDigests() {
@@ -88,13 +111,13 @@ function draw() {
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.translate(offsetX, offsetY);
+    ctx.translate(-offsetX, -offsetY);
     ctx.scale(scale, scale);
     const size = 16;
 
     // Calculate visible area in "world" coordinates
-    const viewLeft = -offsetX / scale;
-    const viewTop = -offsetY / scale;
+    const viewLeft = offsetX / scale;
+    const viewTop = offsetY / scale;
     const viewRight = viewLeft + canvas.width / scale;
     const viewBottom = viewTop + canvas.height / scale;
 
@@ -115,6 +138,13 @@ function draw() {
 
             ctx.fillStyle = countToColor(d.count);
             ctx.fillRect(x, y, size - 2, size - 2);
+            if (currentHoveredFile?.ref_chunks?.has(d.digest_index)) {
+              // draw yeellow border
+              ctx.strokeStyle = 'yellow';
+              ctx.lineWidth = 2;
+              ctx.strokeRect(x, y, size - 2, size - 2);
+            }
+
         });
     } else {
         // Draw mipmap
@@ -145,29 +175,38 @@ function draw() {
   function handleWheel(e) {
     e.preventDefault();
     console.log('wheel', e.offsetX, e.offsetY);
-    const mouseX = e.offsetX - offsetX
-    const mouseY = e.offsetY - offsetY
+    const mouseX = e.offsetX + offsetX
+    const mouseY = e.offsetY + offsetY
     const delta = e.deltaY < 0 ? 1.1 : 0.9;
     scale *= delta;
     // Zoom to mouse position
-    offsetX -= (mouseX * (delta - 1)) * scale;
-    offsetY -= (mouseY * (delta - 1)) * scale;
+    offsetX += (mouseX * (delta - 1)) * scale;
+    offsetY += (mouseY * (delta - 1)) * scale;
     draw();
   }
 
   function handleMouseDown(e) {
     isPanning = true;
+    canvas.style.cursor = 'grabbing';
     startPan = { x: e.clientX, y: e.clientY };
     panOrigin = { x: offsetX, y: offsetY };
   }
   function handleMouseMove(e) {
     if (!isPanning) return;
-    offsetX = panOrigin.x + (e.clientX - startPan.x);
-    offsetY = panOrigin.y + (e.clientY - startPan.y);
+    offsetX = panOrigin.x - (e.clientX - startPan.x);
+    offsetY = panOrigin.y - (e.clientY - startPan.y);
+    // Clamp offsets to prevent scrolling too far
+    offsetX = Math.max(-16, offsetX);
+    offsetY = Math.max(-16, offsetY);
+
     draw();
   }
   function handleMouseUp() {
     isPanning = false;
+    canvas.style.cursor = 'default';
+    offsetX = Math.max(0, offsetX);
+    offsetY = Math.max(0, offsetY);
+    draw();
   }
 
   onMount(() => {
@@ -202,7 +241,18 @@ canvas {
   width: 100%;
   height: 100%;
   display: block;
-  cursor: grab;
+}
+.file-tooltip {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: #fffbe6;
+  border: 1px solid #ccc;
+  padding: 4px 8px;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  z-index: 10;
+  pointer-events: none;
 }
 </style>
 
@@ -214,5 +264,9 @@ canvas {
     on:wheel={handleWheel}
     on:mousedown={handleMouseDown}
   ></canvas>
-<div>offsetX:{offsetX} offsetY:{offsetY} scale:{scale}</div>
+  <div>offsetX:{offsetX} offsetY:{offsetY} scale:{scale}</div>
+  {#if currentHoveredFile}
+    <div>Chunks: {currentHoveredFile.ref_chunks}</div>
+    <div class="file-tooltip">{currentHoveredFile.filename}</div>
+  {/if}
 </div>
