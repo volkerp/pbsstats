@@ -4,6 +4,11 @@
   import { filesStore } from './filesStore.js';
   let canvas;
   let ctx;
+  let drawScheduled = false;
+  let accuCounter = null;
+  let accuRefCounter = null;
+  let accuRefCounterMax = 0;
+  let accuIndexHover = -1;
   let digests = [];
   let minCount = 0;
   let maxCount = 1;
@@ -17,6 +22,7 @@
   let startPan = { x: 0, y: 0 };
   let panOrigin = { x: 0, y: 0 };
   let currentHoveredFile = null;
+  let popover = { x: 0, y: 0, visible: false, value: null };
     
   let latestFetchId = 0;
 
@@ -30,12 +36,22 @@
       // Only update if this is the latest fetch
       if (fetchId === latestFetchId && currentHoveredFile && Array.isArray(json.ref_chunks)) {
         currentHoveredFile.ref_chunks = new Set(json.ref_chunks);
-        draw();
+        scheduleDraw
       }
     } else {
-      draw();
+      scheduleDraw();
     }
   });
+
+  async function fetchAccuCounter() {
+    const res = await fetch('http://localhost:8080/api/accucounter');
+    const json = await res.json();
+    accuCounter = json.accu_count;
+    accuRefCounter = json.accu_ref_count;
+    for (const d of accuRefCounter) {
+      if (d > accuRefCounterMax) accuRefCounterMax = d;
+    }
+  }
 
   // Fetch digest data from API
   async function fetchDigests() {
@@ -54,7 +70,7 @@
         mipMap = calcMipmap(digests);        
     }
     
-    draw();
+    scheduleDraw();
   }
 
 function calcMipmap(digests) {
@@ -88,15 +104,10 @@ function calcMipmap(digests) {
   // Map count to color (green to red)
 let logBase = 10; // You can change this base as needed
 
-function countToColor(count) {
-    // Avoid log(0) and negative values
-    const safeMin = Math.max(minCount, 1);
-    const safeMax = Math.max(maxCount, safeMin + 1);
-    const safeCount = Math.max(count, 1);
-
-    const logMin = Math.log(safeMin) / Math.log(logBase);
-    const logMax = Math.log(safeMax) / Math.log(logBase);
-    const logCount = Math.log(safeCount) / Math.log(logBase);
+function countToColor(count, maxCount) {
+    const logMin = Math.log(1) / Math.log(logBase);
+    const logMax = Math.log(maxCount) / Math.log(logBase);
+    const logCount = Math.log(count) / Math.log(logBase);
 
     const t = (logCount - logMin) / (logMax - logMin || 1);
     // t=0: red, t=1: green
@@ -105,15 +116,27 @@ function countToColor(count) {
     return `rgb(${r},${g},0)`;
 }
 
-  // Draw the digest squares
+function scheduleDraw() {
+  if (!drawScheduled) {
+    drawScheduled = true;
+    requestAnimationFrame(() => {
+      draw();
+      drawScheduled = false;
+    });
+  }
+}
+
+// Draw the digest squares
 function draw() {
     if (!ctx) return;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.translate(-offsetX, -offsetY);
     ctx.scale(scale, scale);
-    const size = 16;
+    const size = 18;
 
     // Calculate visible area in "world" coordinates
     const viewLeft = offsetX / scale;
@@ -121,7 +144,32 @@ function draw() {
     const viewRight = viewLeft + canvas.width / scale;
     const viewBottom = viewTop + canvas.height / scale;
 
-    if (scale > 0.3) {
+    if (scale >= 0.0 && scale <= 3.0) {
+      // Draw accuCounter as 256x256 grid of boxes
+      if (accuCounter && Array.isArray(accuCounter)) {
+        const gridSize = 256;
+        for (let i = 0; i < accuCounter.length; i++) {
+          const x = (i % gridSize) * size;
+          const y = Math.floor(i / gridSize) * size;
+          ctx.fillStyle = countToColor(accuRefCounter[i], accuRefCounterMax);
+          // Check if the square is in the viewport
+          if (
+            x + size < viewLeft ||
+            x > viewRight ||
+            y + size < viewTop ||
+            y > viewBottom
+          ) {
+            continue; // Not visible, skip drawing
+          }
+          ctx.fillRect(x, y, size - 3, size - 3);
+          if (accuIndexHover === i) {
+            ctx.strokeStyle = 'lightgrey';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, size - 3, size - 3);
+          }
+        }
+      }
+    } else if (scale > 3.0) {
         digests.forEach((d, i) => {
             const x = (i % numCols) * size;
             const y = Math.floor(i / numCols) * size;
@@ -172,9 +220,43 @@ function draw() {
     ctx.restore();
 }
 
+function getAccuCounterIndexFromCanvasPos(canvasX, canvasY) {
+    // Undo pan and zoom
+    const size = 18;
+    const gridSize = 256;
+    // Convert canvas coordinates to world coordinates
+    const worldX = (canvasX + offsetX) / scale;
+    const worldY = (canvasY + offsetY) / scale;
+    const x = Math.floor(worldX / size);
+    const y = Math.floor(worldY / size);
+    if (x < 0 || x >= gridSize || y < 0 || y >= gridSize) return -1;
+    return y * gridSize + x;
+}
+
+function updatePopover() {
+  if (accuIndexHover >= 0) {
+    const size = 18;
+    const gridSize = 256;
+    const x = (accuIndexHover % gridSize) * size + size / 2;
+    const y = Math.floor(accuIndexHover / gridSize) * size + size / 2;
+    // Apply pan and zoom
+    const screenX = x * scale - offsetX;
+    const screenY = y * scale - offsetY;
+    popover = {
+      x: screenX,
+      y: screenY,
+      visible: true,
+      label: '0x' + accuIndexHover.toString(16).padStart(4, '0') + '…',
+      count: accuCounter ? accuCounter[accuIndexHover] : null,
+      refCount: accuRefCounter ? accuRefCounter[accuIndexHover] : null,
+    };
+  } else {
+    popover.visible = false;
+  }
+}
+
   function handleWheel(e) {
     e.preventDefault();
-    console.log('wheel', e.offsetX, e.offsetY);
     const mouseX = e.offsetX + offsetX
     const mouseY = e.offsetY + offsetY
     const delta = e.deltaY < 0 ? 1.1 : 0.9;
@@ -182,15 +264,21 @@ function draw() {
     // Zoom to mouse position
     offsetX += (mouseX * (delta - 1)) * scale;
     offsetY += (mouseY * (delta - 1)) * scale;
-    draw();
+    offsetX = Math.max(0, offsetX);
+    offsetY = Math.max(0, offsetY);
+    scheduleDraw();
   }
 
   function handleMouseDown(e) {
     isPanning = true;
     canvas.style.cursor = 'grabbing';
+    accuIndexHover = -1;
+    updatePopover();
+    scheduleDraw();
     startPan = { x: e.clientX, y: e.clientY };
     panOrigin = { x: offsetX, y: offsetY };
   }
+
   function handleMouseMove(e) {
     if (!isPanning) return;
     offsetX = panOrigin.x - (e.clientX - startPan.x);
@@ -199,26 +287,62 @@ function draw() {
     offsetX = Math.max(-16, offsetX);
     offsetY = Math.max(-16, offsetY);
 
-    draw();
+    scheduleDraw();
   }
+
   function handleMouseUp() {
     isPanning = false;
     canvas.style.cursor = 'default';
     offsetX = Math.max(0, offsetX);
     offsetY = Math.max(0, offsetY);
-    draw();
+    scheduleDraw();
+  }
+
+  function handleCanvasMouseMove(e) {
+    // Get mouse position relative to canvas
+    const rect = canvas.getBoundingClientRect();
+    const canvasX = e.clientX - rect.left;
+    const canvasY = e.clientY - rect.top;
+    // For digest grid (scale > 1.5)
+    if (scale > 3.0) {
+      const size = 18;
+      // Convert canvas coordinates to world coordinates
+      const worldX = (canvasX + offsetX) / scale;
+      const worldY = (canvasY + offsetY) / scale;
+      const x = Math.floor(worldX / size);
+      const y = Math.floor(worldY / size);
+      const idx = y * numCols + x;
+      if (idx >= 0 && idx < digests.length) {
+        console.log('chunk index (hex):', '0x' + idx.toString(16));
+      }
+    }
+    // For accuCounter grid (scale <= 1.5)
+    else if (isPanning) {
+      // Do nothing
+    } else if (scale >= 0.0 && scale <= 3.0) {
+      accuIndexHover = getAccuCounterIndexFromCanvasPos(canvasX, canvasY);
+      updatePopover();
+      scheduleDraw();
+    }
+  }
+
+  function handleCanvasMouseLeave() {
+    accuIndexHover = -1;
+    updatePopover();
+    scheduleDraw();
   }
 
   onMount(() => {
     ctx = canvas.getContext('2d');
-    fetchDigests();
+    fetchAccuCounter();
+    //fetchDigests();
     window.addEventListener('mouseup', handleMouseUp);
     window.addEventListener('mousemove', handleMouseMove);
     // Redraw on resize
     const resize = () => {
       canvas.width = canvas.clientWidth;
       canvas.height = canvas.clientHeight;
-      draw();
+      scheduleDraw();
     };
     resize();
     window.addEventListener('resize', resize);
@@ -254,6 +378,17 @@ canvas {
   z-index: 10;
   pointer-events: none;
 }
+.popover {
+  background: #1C1E22;
+  border: 1px solid #000;
+  color: #eee;
+  padding: 4px 8px;
+  border-radius: 4px;
+  box-shadow: 4px 4px 8px rgba(0,0,0,0.12);
+  z-index: 20;
+  pointer-events: none;
+  min-width: 80px;
+}
 </style>
 
 <div class="canvas-container">
@@ -263,10 +398,23 @@ canvas {
     height="400"
     on:wheel={handleWheel}
     on:mousedown={handleMouseDown}
+    on:mousemove={handleCanvasMouseMove}
+    on:mouseleave={handleCanvasMouseLeave}
   ></canvas>
   <div>offsetX:{offsetX} offsetY:{offsetY} scale:{scale}</div>
   {#if currentHoveredFile}
-    <div>Chunks: {currentHoveredFile.ref_chunks}</div>
     <div class="file-tooltip">{currentHoveredFile.filename}</div>
+  {/if}
+  {#if popover.visible}
+    <div class="popover" style="position:absolute; left:{popover.x}px; top:{popover.y}px;">
+      <div style="display: grid; grid-template-columns: max-content auto; gap: 0 8px;">
+        <div style="text-align: right;">Chunks starting with:</div>
+        <div style="text-align: left; font-weight: bold;">{popover.label}</div>
+        <div style="text-align: right;">Number of chunks:</div>
+        <div style="text-align: left; font-weight: bold;">{popover.count}</div>
+        <div style="text-align: right;">Reffered in backups:</div>
+        <div style="text-align: left; font-weight: bold;">{popover.refCount}</div>
+      </div>
+    </div>
   {/if}
 </div>

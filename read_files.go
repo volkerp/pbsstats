@@ -34,14 +34,18 @@ func calculateFileDedup(fileInfo *FileInfo) {
 type DigestMap struct {
 	digestIndex    map[Digest]uint32
 	digestsByIndex map[uint32]Digest
-	counter        map[uint32]int
+	refCounter     map[uint32]int
+	accuCounter    [256 * 256]uint // count digests beginning with the same 2 bytes 0x0000-0xffff
+	accuRefCounter [256 * 256]uint // count references beginning with the same 2 bytes 0x0000-0xffff
 }
 
 func NewDigestMap() *DigestMap {
 	return &DigestMap{
 		digestIndex:    make(map[Digest]uint32),
 		digestsByIndex: make(map[uint32]Digest),
-		counter:        make(map[uint32]int),
+		refCounter:     make(map[uint32]int),
+		accuCounter:    [256 * 256]uint{},
+		accuRefCounter: [256 * 256]uint{},
 	}
 }
 
@@ -54,17 +58,21 @@ var (
 )
 
 func (d *DigestMap) add(digest Digest) uint32 {
+	var index uint32
 	if _, exists := d.digestIndex[digest]; !exists {
-		index := uint32(len(d.digestIndex))
+		// digest not yet in index
+		index = uint32(len(d.digestIndex))
 		d.digestIndex[digest] = index
 		d.digestsByIndex[index] = digest
-		d.counter[index] = 1
-		return index
+		d.refCounter[index] = 1
+		d.accuCounter[uint16(digest[0])<<8|uint16(digest[1])]++
 	} else {
-		index := d.digestIndex[digest]
-		d.counter[index]++
-		return index
+		index = d.digestIndex[digest]
+		d.refCounter[index]++
 	}
+	d.accuRefCounter[uint16(digest[0])<<8|uint16(digest[1])]++
+
+	return index
 }
 
 func (f *Files) addFileRef(filename string, digestIndex uint32) {
@@ -172,7 +180,7 @@ func printOccurrences(digestMap *DigestMap, topN int) {
 	}
 
 	var digestList []digestCount
-	for digestIdx, count := range digestMap.counter {
+	for digestIdx, count := range digestMap.refCounter {
 		digest := digestMap.digestsByIndex[digestIdx]
 		digestList = append(digestList, digestCount{digest, count})
 	}

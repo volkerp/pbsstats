@@ -15,7 +15,7 @@
     <div class="card">
       <Counter />
     </div>
-    <div class="card">
+    <div>
       <ChunkMap />
     </div>
   </div>

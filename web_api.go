@@ -6,15 +6,21 @@ import (
 	"net/http"
 )
 
-func apiStatsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusOK)
-		return
+// corsMiddleware wraps an http.HandlerFunc to set CORS headers once for all handlers.
+func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next(w, r)
 	}
+}
 
+func apiStatsHandler(w http.ResponseWriter, r *http.Request) {
 	globalDataMutex.RLock()
 	defer globalDataMutex.RUnlock()
 	stats := struct {
@@ -29,14 +35,6 @@ func apiStatsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func apiDigestsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
 	globalDataMutex.RLock()
 	defer globalDataMutex.RUnlock()
 	type digestEntry struct {
@@ -46,7 +44,7 @@ func apiDigestsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	var digests []digestEntry
 	for idx := range globalDigestsMap.digestsByIndex {
-		count := globalDigestsMap.counter[idx]
+		count := globalDigestsMap.refCounter[idx]
 		digests = append(digests, digestEntry{
 			//Digest: fmt.Sprintf("%032x", digest),
 			DigestIndex: idx,
@@ -57,15 +55,32 @@ func apiDigestsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(digests)
 }
 
-func apiFilesHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusOK)
-		return
+func apiDigestsHandler2(w http.ResponseWriter, r *http.Request) {
+	prefix := r.URL.Query().Get("prefix")
+	globalDataMutex.RLock()
+	defer globalDataMutex.RUnlock()
+	type digestEntry struct {
+		Digest      string `json:"digest"`
+		DigestIndex uint32 `json:"digest_index"`
+		Count       int    `json:"count"`
 	}
+	var digests []digestEntry
+	for idx, digest := range globalDigestsMap.digestsByIndex {
+		digestHex := fmt.Sprintf("%032x", digest)
+		if prefix == "" || (len(prefix) <= len(digestHex) && digestHex[:len(prefix)] == prefix) {
+			count := globalDigestsMap.refCounter[idx]
+			digests = append(digests, digestEntry{
+				Digest:      digestHex,
+				DigestIndex: idx,
+				Count:       count,
+			})
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(digests)
+}
 
+func apiFilesHandler(w http.ResponseWriter, r *http.Request) {
 	globalDataMutex.RLock()
 	defer globalDataMutex.RUnlock()
 
@@ -86,15 +101,8 @@ func apiFilesHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(files)
 }
 
+// apiFileRefChunksHandler handles HTTP requests for retrieving the reference chunk IDs of a specified file.
 func apiFileRefChunksHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
 	filename := r.URL.Query().Get("filename")
 	if filename == "" {
 		http.Error(w, "filename parameter required", http.StatusBadRequest)
@@ -118,11 +126,27 @@ func apiFileRefChunksHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+func apiAccuCounterHandler(w http.ResponseWriter, r *http.Request) {
+	globalDataMutex.RLock()
+	defer globalDataMutex.RUnlock()
+	accuCount := struct {
+		AccuCount    [256 * 256]uint `json:"accu_count"`
+		AccuRefCount [256 * 256]uint `json:"accu_ref_count"`
+	}{
+		AccuCount:    globalDigestsMap.accuCounter,
+		AccuRefCount: globalDigestsMap.accuRefCounter,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(accuCount)
+}
+
 func startWebServer(port int) {
-	http.HandleFunc("/api/stats", apiStatsHandler)
-	http.HandleFunc("/api/digests", apiDigestsHandler)
-	http.HandleFunc("/api/files", apiFilesHandler)
-	http.HandleFunc("/api/refchunks", apiFileRefChunksHandler)
+	http.HandleFunc("/api/stats", corsMiddleware(apiStatsHandler))
+	http.HandleFunc("/api/digests", corsMiddleware(apiDigestsHandler))
+	http.HandleFunc("/api/chunks", corsMiddleware(apiDigestsHandler2))
+	http.HandleFunc("/api/files", corsMiddleware(apiFilesHandler))
+	http.HandleFunc("/api/refchunks", corsMiddleware(apiFileRefChunksHandler))
+	http.HandleFunc("/api/accucounter", corsMiddleware(apiAccuCounterHandler))
 	go func() {
 		addr := fmt.Sprintf(":%d", port)
 		fmt.Printf("Starting webserver on %s (API at /api/)\n", addr)
