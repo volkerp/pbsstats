@@ -1,8 +1,11 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/fs"
 	"net/http"
 )
 
@@ -140,7 +143,44 @@ func apiAccuCounterHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(accuCount)
 }
 
+func spaHandler(w http.ResponseWriter, r *http.Request) {
+	// handle requests to /
+	if r.URL.Path == "/" || r.URL.Path == "" || r.URL.Path == "index.html" || r.URL.Path == "/index.html" {
+		// Open the embedded index.html
+		indexFile, _ := embeddedFiles.Open("index.html")
+		defer indexFile.Close()
+
+		index, _ := io.ReadAll(indexFile)
+		w.WriteHeader(http.StatusAccepted)
+		w.Write(index)
+		return
+	} else {
+		// Serve static files from the embedded file system
+		spaFileServer.ServeHTTP(w, r)
+	}
+}
+
+//go:embed web/dist
+var embeddedFilesWebDist embed.FS // embedded file system prefixed with "web/dist"
+
+var embeddedFiles fs.FS // embedded file withoud prefix "web/dist"
+
+var spaFileServer http.Handler
+
+//go:generate echo "Building frontend assets..."
+//go:generate npm run build --prefix web
+
 func startWebServer(port int) {
+	// embeddedFiles is the embedded file system containing the static files
+	// get rid of prefix "web/dist/"
+	embeddedFiles, _ = fs.Sub(embeddedFilesWebDist, "web/dist")
+
+	// http.FS converts the fs.FS (our subFS) to the http.FileSystem interface
+	// http.FileServer creates a handler that serves HTTP requests
+	// with the contents of the file system (http.FS(subFS)).
+	spaFileServer = http.FileServer(http.FS(embeddedFiles))
+
+	http.HandleFunc("/", corsMiddleware(spaHandler))
 	http.HandleFunc("/api/stats", corsMiddleware(apiStatsHandler))
 	http.HandleFunc("/api/digests", corsMiddleware(apiDigestsHandler))
 	http.HandleFunc("/api/chunks", corsMiddleware(apiDigestsHandler2))

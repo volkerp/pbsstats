@@ -105,6 +105,7 @@ function calcMipmap(digests) {
 let logBase = 10; // You can change this base as needed
 
 function countToColor(count, maxCount) {
+    if (count <= 0) return 'rgb(0,0,0)';
     const logMin = Math.log(1) / Math.log(logBase);
     const logMax = Math.log(maxCount) / Math.log(logBase);
     const logCount = Math.log(count) / Math.log(logBase);
