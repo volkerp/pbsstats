@@ -11,8 +11,8 @@ func main() {
 	var topFiles int
 	var webPort int
 
-	flag.IntVar(&topChunks, "top-chunks", 50, "Show top N most referenced chunks")
-	flag.IntVar(&topFiles, "top-files", 50, "Show top N files with highest dedup ratio")
+	flag.IntVar(&topChunks, "top-chunks", 0, "Show top N most referenced chunks")
+	flag.IntVar(&topFiles, "top-files", 0, "Show top N files with highest dedup ratio")
 	flag.IntVar(&webPort, "web-port", 8080, "Start webserver on given port (0 disables webserver)")
 	flag.Parse()
 
@@ -36,8 +36,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	printOccurrences(&globalDigestsMap, topChunks)
-	printFileDedupHighest(globalFileIndex, topFiles)
+	if topChunks > 0 {
+		printOccurrences(&globalDigestsMap, topChunks)
+	}
+	if topFiles > 0 {
+		printFileDedupHighest(globalFileIndex, topFiles)
+	}
 
 	if webPort != 0 {
 		// Block forever to keep the webserver running

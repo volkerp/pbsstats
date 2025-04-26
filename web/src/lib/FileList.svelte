@@ -54,7 +54,7 @@
 
 <style>
 .file-list {
-  width: 250px;
+  width: 100%;
   max-height: 100vh;
   overflow-y: scroll;
   border-right: 1px solid #ccc;
@@ -70,6 +70,8 @@
   text-overflow: ellipsis;
   cursor: pointer;
   border-radius: 2px;
+  border-bottom: 2px solid #ccc;
+  transition: background 0.3s, border-bottom 0.3s;
 }
 .file-entry:hover {
   background: #e6f0fa;
@@ -83,8 +85,7 @@
     <div style="color:red">{error}</div>
   {:else}
     {#each files as file}
-        <div
-          class="file-entry"
+        <div class="file-entry"
           title="{file.filename} Dedup:{file.unique_chunks / file.num_ref_chunks}"
           style="background-color: {ratioToColor(file.unique_chunks / file.num_ref_chunks)}"
           on:mouseenter={() => handleMouseOver(file)}

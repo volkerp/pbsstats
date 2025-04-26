@@ -10,9 +10,9 @@
   <div class="sidebar">
     <FileList />
   </div>
-  <div class="content">
+  <div class="mainbar">
     <h1>Proxmox Backup Server Chunk usage</h1>
-    <div>
+    <div class="chunkmap">
       <ChunkMap />
     </div>
   </div>
@@ -21,20 +21,28 @@
 <style>
   .main-layout {
     display: flex;
+    flex-direction: row;
     height: 100vh;
     margin: 0;
     padding: 0;
   }
   .sidebar {
-    height: 100vh;
     overflow-y: auto;
     background: #fafbfc;
     border-right: 1px solid #ccc;
-    flex-shrink: 0;
+    flex: 1;
+  }
+  .mainbar {
+    display: flex;
+    flex-direction: column;
+    flex: 5;
   }
   .content {
-    flex: 1 1 0%;
-    padding: 1.5em;
-    overflow: auto;
+    flex: 5;
+  }
+  .chunkmap {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
   }
 </style>

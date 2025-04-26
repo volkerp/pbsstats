@@ -189,8 +189,7 @@ func startWebServer(port int) {
 	http.HandleFunc("/api/accucounter", corsMiddleware(apiAccuCounterHandler))
 	go func() {
 		addr := fmt.Sprintf(":%d", port)
-		fmt.Printf("Starting webserver on %s (API at /api/)\n", addr)
-		fmt.Println("API for digests at /api/digests")
+		fmt.Printf("Starting webserver on %s\n", addr)
 		err := http.ListenAndServe(addr, nil)
 		if err != nil {
 			fmt.Printf("Webserver error: %v\n", err)

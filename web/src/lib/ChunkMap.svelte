@@ -22,8 +22,12 @@
   let startPan = { x: 0, y: 0 };
   let panOrigin = { x: 0, y: 0 };
   let currentHoveredFile = null;
-  let popover = { x: 0, y: 0, visible: false, value: null };
-    
+  let popover = { x: 0, y: 0, visible: false };
+
+  const squareSize = 18; // Size of each square in pixels
+  const gridSize = 256; // Size of the grid (256x256)
+
+  
   let latestFetchId = 0;
 
   hoveredFile.subscribe(async value => {
@@ -137,7 +141,6 @@ function draw() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.translate(-offsetX, -offsetY);
     ctx.scale(scale, scale);
-    const size = 18;
 
     // Calculate visible area in "world" coordinates
     const viewLeft = offsetX / scale;
@@ -148,56 +151,55 @@ function draw() {
     if (scale >= 0.0 && scale <= 3.0) {
       // Draw accuCounter as 256x256 grid of boxes
       if (accuCounter && Array.isArray(accuCounter)) {
-        const gridSize = 256;
         for (let i = 0; i < accuCounter.length; i++) {
-          const x = (i % gridSize) * size;
-          const y = Math.floor(i / gridSize) * size;
+          const x = (i % gridSize) * squareSize;
+          const y = Math.floor(i / gridSize) * squareSize;
           ctx.fillStyle = countToColor(accuRefCounter[i], accuRefCounterMax);
           // Check if the square is in the viewport
           if (
-            x + size < viewLeft ||
+            x + squareSize < viewLeft ||
             x > viewRight ||
-            y + size < viewTop ||
+            y + squareSize < viewTop ||
             y > viewBottom
           ) {
             continue; // Not visible, skip drawing
           }
-          ctx.fillRect(x, y, size - 3, size - 3);
+          ctx.fillRect(x, y, squareSize - 3, squareSize - 3);
           if (accuIndexHover === i) {
             ctx.strokeStyle = 'lightgrey';
             ctx.lineWidth = 2;
-            ctx.strokeRect(x, y, size - 3, size - 3);
+            ctx.strokeRect(x - 1, y - 1, squareSize - 2, squareSize - 2);
           }
         }
       }
     } else if (scale > 3.0) {
         digests.forEach((d, i) => {
-            const x = (i % numCols) * size;
-            const y = Math.floor(i / numCols) * size;
+            const x = (i % numCols) * squareSize;
+            const y = Math.floor(i / numCols) * squareSize;
 
             // Check if the square is in the viewport
             if (
-                x + size < viewLeft ||
+                x + squareSize < viewLeft ||
                 x > viewRight ||
-                y + size < viewTop ||
+                y + squareSize < viewTop ||
                 y > viewBottom
             ) {
                 return; // Not visible, skip drawing
             }
 
             ctx.fillStyle = countToColor(d.count);
-            ctx.fillRect(x, y, size - 2, size - 2);
+            ctx.fillRect(x, y, squareSize - 2, squareSize - 2);
             if (currentHoveredFile?.ref_chunks?.has(d.digest_index)) {
               // draw yeellow border
               ctx.strokeStyle = 'yellow';
               ctx.lineWidth = 2;
-              ctx.strokeRect(x, y, size - 2, size - 2);
+              ctx.strokeRect(x, y, squareSize - 2, squareSize - 2);
             }
 
         });
     } else {
         // Draw mipmap
-        const mipSize = size * 4;
+        const mipSize = squareSize * 4;
         const mipCols = Math.ceil(numCols / 4);
         const mipRows = Math.ceil(mipMap.length / mipCols);
         for (let i = 0; i < mipMap.length; i++) {
@@ -236,13 +238,12 @@ function getAccuCounterIndexFromCanvasPos(canvasX, canvasY) {
 
 function updatePopover() {
   if (accuIndexHover >= 0) {
-    const size = 18;
-    const gridSize = 256;
-    const x = (accuIndexHover % gridSize) * size + size / 2;
-    const y = Math.floor(accuIndexHover / gridSize) * size + size / 2;
+    const x = (accuIndexHover % gridSize) * squareSize + squareSize / 2;
+    const y = Math.floor(accuIndexHover / gridSize) * squareSize + squareSize / 2;
     // Apply pan and zoom
-    const screenX = x * scale - offsetX;
-    const screenY = y * scale - offsetY;
+    const rect = canvas.getBoundingClientRect();
+    const screenX = x * scale - offsetX + rect.left;
+    const screenY = y * scale - offsetY + rect.top;
     popover = {
       x: screenX,
       y: screenY,
@@ -258,15 +259,15 @@ function updatePopover() {
 
   function handleWheel(e) {
     e.preventDefault();
-    const mouseX = e.offsetX + offsetX
-    const mouseY = e.offsetY + offsetY
+    const mouseX = (e.offsetX + offsetX) / scale
+    const mouseY = (e.offsetY + offsetY) / scale
     const delta = e.deltaY < 0 ? 1.1 : 0.9;
     scale *= delta;
+    scale = Math.max(0.2, Math.min(scale, 3.0)); // Limit zoom level
     // Zoom to mouse position
-    offsetX += (mouseX * (delta - 1)) * scale;
-    offsetY += (mouseY * (delta - 1)) * scale;
-    offsetX = Math.max(0, offsetX);
-    offsetY = Math.max(0, offsetY);
+    offsetX = (mouseX - e.offsetX) * scale;
+    offsetY = (mouseY - e.offsetY) * scale;
+    restrictOffset();
     scheduleDraw();
   }
 
@@ -284,19 +285,22 @@ function updatePopover() {
     if (!isPanning) return;
     offsetX = panOrigin.x - (e.clientX - startPan.x);
     offsetY = panOrigin.y - (e.clientY - startPan.y);
-    // Clamp offsets to prevent scrolling too far
-    offsetX = Math.max(-16, offsetX);
-    offsetY = Math.max(-16, offsetY);
-
+    restrictOffset();
     scheduleDraw();
   }
 
   function handleMouseUp() {
     isPanning = false;
     canvas.style.cursor = 'default';
-    offsetX = Math.max(0, offsetX);
-    offsetY = Math.max(0, offsetY);
+    restrictOffset();
     scheduleDraw();
+  }
+
+  function restrictOffset() {
+    offsetX = Math.min((squareSize * (gridSize+1)) * scale - canvas.width, offsetX);
+    offsetY = Math.min((squareSize * (gridSize+1)) * scale - canvas.height, offsetY);
+    offsetX = Math.max(- squareSize * scale, offsetX);
+    offsetY = Math.max(- squareSize * scale, offsetY);
   }
 
   function handleCanvasMouseMove(e) {
@@ -357,14 +361,15 @@ function updatePopover() {
 
 <style>
 .canvas-container {
-  width: 100%;
-  height: 800px;
   border: 1px solid #ccc;
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
 }
 canvas {
   width: 100%;
-  height: 100%;
+  flex-grow: 1;
   display: block;
 }
 .file-tooltip {
@@ -393,6 +398,7 @@ canvas {
 </style>
 
 <div class="canvas-container">
+  <div>offsetX:{offsetX} offsetY:{offsetY} scale:{scale}</div>
   <canvas
     bind:this={canvas}
     width="800"
@@ -402,7 +408,6 @@ canvas {
     on:mousemove={handleCanvasMouseMove}
     on:mouseleave={handleCanvasMouseLeave}
   ></canvas>
-  <div>offsetX:{offsetX} offsetY:{offsetY} scale:{scale}</div>
   {#if currentHoveredFile}
     <div class="file-tooltip">{currentHoveredFile.filename}</div>
   {/if}
@@ -413,7 +418,7 @@ canvas {
         <div style="text-align: left; font-weight: bold;">{popover.label}</div>
         <div style="text-align: right;">Number of chunks:</div>
         <div style="text-align: left; font-weight: bold;">{popover.count}</div>
-        <div style="text-align: right;">Reffered in backups:</div>
+        <div style="text-align: right;">Referred in backups:</div>
         <div style="text-align: left; font-weight: bold;">{popover.refCount}</div>
       </div>
     </div>

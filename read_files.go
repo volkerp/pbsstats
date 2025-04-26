@@ -112,7 +112,7 @@ func scanIndexFiles(root string) error {
 				}
 
 				globalDataMutex.Lock()
-				fmt.Printf("Processing file: %s\n", path)
+				fmt.Printf("\r\033[KProcessing file: %s", path)
 				for _, digest := range didx.Digests {
 					digestIndex := globalDigestsMap.add(digest.Digest)
 					globalFileIndex.addFileRef(path, digestIndex)
@@ -130,7 +130,7 @@ func scanIndexFiles(root string) error {
 				}
 
 				globalDataMutex.Lock()
-				fmt.Printf("Processing file: %s\n", path)
+				fmt.Printf("\r\033[KProcessing file: %s", path)
 				for _, digest := range fidx.Digests {
 					digestIndex := globalDigestsMap.add(digest)
 					globalFileIndex.addFileRef(path, digestIndex)
@@ -166,7 +166,7 @@ func scanIndexFiles(root string) error {
 
 	close(fileChan) // Close the channel to signal workers to stop
 	wg.Wait()       // Wait for all workers to finish
-
+	fmt.Println("\033[Processed all files.")
 	return err
 }
 
