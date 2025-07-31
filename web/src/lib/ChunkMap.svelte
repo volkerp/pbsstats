@@ -40,7 +40,7 @@
       // Only update if this is the latest fetch
       if (fetchId === latestFetchId && currentHoveredFile && Array.isArray(json.ref_chunks)) {
         currentHoveredFile.ref_chunks = new Set(json.ref_chunks);
-        scheduleDraw
+        scheduleDraw();
       }
     } else {
       scheduleDraw();
@@ -259,14 +259,19 @@ function updatePopover() {
 
   function handleWheel(e) {
     e.preventDefault();
-    const mouseX = (e.offsetX + offsetX) / scale
-    const mouseY = (e.offsetY + offsetY) / scale
+    // Get mouse position in canvas coordinates
+    const mouseX = e.offsetX;
+    const mouseY = e.offsetY;
+    // Get mouse position in world coordinates before zoom
+    const worldX = (mouseX + offsetX) / scale;
+    const worldY = (mouseY + offsetY) / scale;
     const delta = e.deltaY < 0 ? 1.1 : 0.9;
+    const prevScale = scale;
     scale *= delta;
     scale = Math.max(0.2, Math.min(scale, 3.0)); // Limit zoom level
-    // Zoom to mouse position
-    offsetX = (mouseX - e.offsetX) * scale;
-    offsetY = (mouseY - e.offsetY) * scale;
+    // Adjust offset so that the world point under the mouse stays under the mouse
+    offsetX = worldX * scale - mouseX;
+    offsetY = worldY * scale - mouseY;
     restrictOffset();
     scheduleDraw();
   }
