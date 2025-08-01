@@ -26,9 +26,48 @@
 
   const squareSize = 18; // Size of each square in pixels
   const gridSize = 256; // Size of the grid (256x256)
-
   
   let latestFetchId = 0;
+  let fetchTimer = null;
+
+
+  // props
+  export let progressMsg = '';
+
+  $: if (progressMsg) {
+    if (progressMsg.startsWith('event: close')) {
+      fetchTimer && clearInterval(fetchTimer);
+    }
+  }
+
+  onMount(() => {
+    ctx = canvas.getContext('2d');
+    fetchAccuCounter();
+    //fetchDigests();
+    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('mousemove', handleMouseMove);
+    // Redraw on resize
+    const resize = () => {
+      canvas.width = canvas.clientWidth;
+      canvas.height = canvas.clientHeight;
+      scheduleDraw();
+    };
+    window.addEventListener('resize', resize);
+    resize();
+
+    // kick off timer to reload accuCounter 
+    fetchTimer = setInterval(() => {
+      fetchAccuCounter();
+      scheduleDraw();
+    }, 1600); 
+
+    // return cleanup function
+    return () => {
+      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('resize', resize);
+    };
+  });
 
   hoveredFile.subscribe(async value => {
     currentHoveredFile = value;
@@ -342,26 +381,6 @@ function updatePopover() {
     scheduleDraw();
   }
 
-  onMount(() => {
-    ctx = canvas.getContext('2d');
-    fetchAccuCounter();
-    //fetchDigests();
-    window.addEventListener('mouseup', handleMouseUp);
-    window.addEventListener('mousemove', handleMouseMove);
-    // Redraw on resize
-    const resize = () => {
-      canvas.width = canvas.clientWidth;
-      canvas.height = canvas.clientHeight;
-      scheduleDraw();
-    };
-    resize();
-    window.addEventListener('resize', resize);
-    return () => {
-      window.removeEventListener('mouseup', handleMouseUp);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('resize', resize);
-    };
-  });
 </script>
 
 <style>
@@ -403,7 +422,7 @@ canvas {
 </style>
 
 <div class="canvas-container">
-  <div>offsetX:{offsetX} offsetY:{offsetY} scale:{scale}</div>
+  <!--<div>offsetX:{offsetX} offsetY:{offsetY} scale:{scale}</div>-->
   <canvas
     bind:this={canvas}
     width="800"

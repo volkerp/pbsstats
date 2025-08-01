@@ -4,12 +4,25 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
 	var topChunks int
 	var topFiles int
 	var webPort int
+
+	// Channel for OS signals
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Handle OS signals to gracefully shut down
+	go func() {
+		<-signalChan
+		fmt.Println("\nReceived shutdown signal, exiting...")
+		os.Exit(0)
+	}()
 
 	flag.IntVar(&topChunks, "top-chunks", 0, "Show top N most referenced chunks")
 	flag.IntVar(&topFiles, "top-files", 0, "Show top N files with highest dedup ratio")

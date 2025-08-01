@@ -160,6 +160,26 @@ func spaHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// streamHandler stream scan progress updates to the client using server-sent events (SSE).
+func streamHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	for msg := range globalScanProgressChan {
+		fmt.Fprintf(w, "data: %s\n\n", msg)
+		flusher.Flush()
+	}
+	fmt.Fprintf(w, "event: close\ndata: stream closed\n\n")
+	flusher.Flush()
+}
+
 //go:embed web/dist
 var embeddedFilesWebDist embed.FS // embedded file system prefixed with "web/dist"
 
@@ -187,6 +207,7 @@ func startWebServer(port int) {
 	http.HandleFunc("/api/files", corsMiddleware(apiFilesHandler))
 	http.HandleFunc("/api/refchunks", corsMiddleware(apiFileRefChunksHandler))
 	http.HandleFunc("/api/accucounter", corsMiddleware(apiAccuCounterHandler))
+	http.HandleFunc("/api/stream", corsMiddleware(streamHandler))
 	go func() {
 		addr := fmt.Sprintf(":%d", port)
 		fmt.Printf("Starting webserver on %s\n", addr)
