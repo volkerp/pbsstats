@@ -5,11 +5,14 @@
   import ChunkMap from './lib/ChunkMap.svelte'
   import FileList from './lib/FileList.svelte'
 
+  let progressCnt = $state(0)
   let progressMsg = $state('Loading...')
 
   const eventSource = new EventSource('http://localhost:8080/api/stream');
   eventSource.onmessage = (event) => {
-    progressMsg = event.data; 
+    const data = JSON.parse(event.data);
+    progressCnt = data.count;
+    progressMsg = data.file;
   };
   eventSource.addEventListener('close', (event) => {
     progressMsg = 'event: close';
@@ -19,12 +22,16 @@
 </script>
 
 <main class="main-layout">
-  <div class="sidebar">
+  <!-- <div class="sidebar">
     <FileList />
-  </div>
+  </div> -->
   <div class="mainbar">
     <h1>Proxmox Backup Server Chunk usage</h1>
-    <h2>Scanning: {progressMsg}</h2>
+    {#if progressMsg.startsWith('event: close')}
+      <h2>Files scanned: {progressCnt}</h2>
+    {:else}
+      <h2>Scanning: {progressCnt} {progressMsg}</h2> 
+    {/if}
     <div class="chunkmap">
       <ChunkMap progressMsg={progressMsg} />
     </div>
@@ -36,8 +43,8 @@
     display: flex;
     flex-direction: row;
     height: 100vh;
-    margin: 0;
     padding: 0;
+    margin: 0 2px;
   }
   .sidebar {
     overflow-y: auto;
@@ -57,8 +64,9 @@
   }
 
   h2 {
-    font-size: 1.5em;
-    margin: 0.5em 0;
+    font-size: 1.3em;
+    margin: 0.5em 1em;
+    text-align: left;
   }
 
   .chunkmap {

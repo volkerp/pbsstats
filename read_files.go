@@ -118,7 +118,7 @@ func scanIndexFiles(root string) error {
 				if len(globalScanProgressChan) >= 100 {
 					<-globalScanProgressChan
 				}
-				globalScanProgressChan <- fmt.Sprintf("%d %s", len(globalFileIndex), path)
+				globalScanProgressChan <- fmt.Sprintf(`{ "count": %d, "file": "%s" }`, len(globalFileIndex), path)
 				for _, digest := range didx.Digests {
 					digestIndex := globalDigestsMap.add(digest.Digest)
 					globalFileIndex.addFileRef(path, digestIndex)
@@ -140,7 +140,7 @@ func scanIndexFiles(root string) error {
 				if len(globalScanProgressChan) >= 100 {
 					<-globalScanProgressChan
 				}
-				globalScanProgressChan <- fmt.Sprintf("%d %s", len(globalFileIndex), path)
+				globalScanProgressChan <- fmt.Sprintf(`{ "count": %d, "file": "%s" }`, len(globalFileIndex), path)
 				for _, digest := range fidx.Digests {
 					digestIndex := globalDigestsMap.add(digest)
 					globalFileIndex.addFileRef(path, digestIndex)

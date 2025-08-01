@@ -26,7 +26,7 @@ func main() {
 
 	flag.IntVar(&topChunks, "top-chunks", 0, "Show top N most referenced chunks")
 	flag.IntVar(&topFiles, "top-files", 0, "Show top N files with highest dedup ratio")
-	flag.IntVar(&webPort, "web-port", 8080, "Start webserver on given port (0 disables webserver)")
+	flag.IntVar(&webPort, "web-port", 8080, "Start webserver on port (0 disables webserver)")
 	flag.Parse()
 
 	if flag.NArg() < 1 {
