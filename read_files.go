@@ -51,9 +51,10 @@ func NewDigestMap() *DigestMap {
 type Files map[string]FileInfo
 
 var (
-	globalDataMutex  sync.RWMutex
-	globalDigestsMap DigestMap
-	globalFileIndex  Files
+	globalDataMutex        sync.RWMutex
+	globalDigestsMap       DigestMap
+	globalFileIndex        Files
+	globalScanProgressChan chan string // Channel for scan progress updates
 )
 
 func (d *DigestMap) add(digest Digest) uint32 {
@@ -97,8 +98,9 @@ func calculateFilesDedup(files Files) Files {
 }
 
 func scanIndexFiles(root string) error {
-	fileChan := make(chan string, 100) // Channel to pass file paths
-	wg := &sync.WaitGroup{}            // WaitGroup to wait for all workers
+	fileChan := make(chan string, 100)              // Channel to pass file paths
+	globalScanProgressChan = make(chan string, 100) // Channel for scan progress updates
+	wg := &sync.WaitGroup{}                         // WaitGroup to wait for all workers
 
 	// Worker function to process files
 	worker := func() {
@@ -113,6 +115,10 @@ func scanIndexFiles(root string) error {
 
 				globalDataMutex.Lock()
 				fmt.Printf("\r\033[KProcessing file: %s", path)
+				if len(globalScanProgressChan) >= 100 {
+					<-globalScanProgressChan
+				}
+				globalScanProgressChan <- fmt.Sprintf(`{ "count": %d, "file": "%s" }`, len(globalFileIndex), path)
 				for _, digest := range didx.Digests {
 					digestIndex := globalDigestsMap.add(digest.Digest)
 					globalFileIndex.addFileRef(path, digestIndex)
@@ -131,6 +137,10 @@ func scanIndexFiles(root string) error {
 
 				globalDataMutex.Lock()
 				fmt.Printf("\r\033[KProcessing file: %s", path)
+				if len(globalScanProgressChan) >= 100 {
+					<-globalScanProgressChan
+				}
+				globalScanProgressChan <- fmt.Sprintf(`{ "count": %d, "file": "%s" }`, len(globalFileIndex), path)
 				for _, digest := range fidx.Digests {
 					digestIndex := globalDigestsMap.add(digest)
 					globalFileIndex.addFileRef(path, digestIndex)
@@ -166,7 +176,8 @@ func scanIndexFiles(root string) error {
 
 	close(fileChan) // Close the channel to signal workers to stop
 	wg.Wait()       // Wait for all workers to finish
-	fmt.Println("\033[Processed all files.")
+	close(globalScanProgressChan)
+	fmt.Println("\n\033[KProcessed all files.")
 	return err
 }
 
