@@ -55,8 +55,6 @@
 <style>
 .file-list {
   width: 100%;
-  max-height: 100vh;
-  overflow-y: scroll;
   border-right: 1px solid #ccc;
   background: #fafbfc;
   font-size: 0.92em;

@@ -22,3 +22,19 @@ scan_fidx --top-chunks 100 --top-files 20 /path/to/datastore
 ```
 
 This will print the 100 most referenced chunk digests and the 20 files with the highest deduplication ratio in the specified directory tree.
+
+## Building
+Prerequisits: golang and npm installed
+
+```bash
+# install npm packages
+cd web
+npm install
+cd ..
+# generate web frontend and build go app
+go generate
+go build
+```
+
+
+
